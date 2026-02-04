@@ -23,7 +23,6 @@ function addWorkingDays(startDate, workdays) {
   return date.toISOString().split('T')[0];
 }
 
-// ===== УТИЛИТА =====
 function clearForm() {
   ['orderNumber','orderDate','deliveryDate14','deliveryDate45',
    'client1','client2','orderComment']
@@ -34,7 +33,6 @@ function clearForm() {
   document.getElementById('itemsList').innerHTML = '';
 }
 
-// ===== КАСТОМНЫЙ ALERT =====
 function showAlert(message, focusElementId = null) {
   const existingAlert = document.getElementById('customAlert');
   if (existingAlert) existingAlert.remove();
@@ -55,19 +53,102 @@ function showAlert(message, focusElementId = null) {
   document.getElementById('alertOkBtn').onclick = () => {
     document.body.removeChild(alertDiv);
     if (focusElementId) {
-      setTimeout(() => {
-        document.getElementById(focusElementId).focus();
-      }, 100);
+      setTimeout(() => document.getElementById(focusElementId).focus(), 100);
     }
   };
 }
 
-// ===== ЭКРАНИРОВАНИЕ HTML =====
 function escapeHtml(text) {
   if (typeof text !== 'string') return text;
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// 🔥 НАДЁЖНАЯ СИНХРОНИЗАЦИЯ
+async function syncWithSheets() {
+  try {
+    showAlert('🔄 Синхронизация...');
+    const orders = await orderManager.loadOrders();
+    
+    if (orders.length === 0) {
+      showAlert('📭 Нет заказов');
+      return;
+    }
+
+    const syncData = {
+      orders: orders.map(order => ({
+        number: order.number,
+        createdAt: order.createdAt,
+        products: order.items.map(i => i.name).join(', '),
+        clients: order.clients?.map(c => c.full || '').join('; ') || '',
+        comment: order.comment || '',
+        delivery14: order.delivery14,
+        statuses: order.items.map(i => Object.keys(i.statuses || {}).filter(k => i.statuses[k]).join(',')).join('; ')
+      })),
+      timestamp: new Date().toISOString(),
+      count: orders.length,
+      device: navigator.userAgent.includes('Electron') ? 'Windows' : 'Android'
+    };
+
+    const jsonStr = JSON.stringify(syncData, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `umishka_${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    await navigator.clipboard.writeText(jsonStr);
+    showAlert(`✅ ${orders.length} заказов\n📱 Android: ☁️ (двойной клик)`);
+    
+  } catch(error) {
+    showAlert(`❌ Ошибка: ${error.message}`);
+  }
+}
+
+// 🔥 ИМПОРТ
+async function importFromClipboard() {
+  try {
+    const text = await navigator.clipboard.readText();
+    const data = JSON.parse(text);
+    
+    if (!data.orders) {
+      showAlert('❌ Неверный формат');
+      return;
+    }
+    
+    const currentOrders = await orderManager.loadOrders();
+    const existingNumbers = currentOrders.map(o => o.number);
+    const newOrders = data.orders.filter(order => !existingNumbers.includes(order.number));
+    
+    if (newOrders.length === 0) {
+      showAlert('✅ Все заказы уже есть');
+      return;
+    }
+    
+    const convertedOrders = newOrders.map(order => ({
+      number: order.number,
+      createdAt: order.createdAt,
+      clients: order.clients ? [{ full: order.clients }] : [],
+      items: [{ name: order.products, price: 0, statuses: {} }],
+      comment: order.comment,
+      delivery14: order.delivery14,
+      delivery45: addCalendarDays(order.createdAt, 45),
+      id: `import_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    }));
+    
+    const allOrders = [...currentOrders, ...convertedOrders];
+    await orderManager.saveOrders(allOrders);
+    orderManager.reRenderAll();
+    applySearchFilters();
+    showAlert(`✅ +${newOrders.length} заказов!`);
+  } catch(e) {
+    showAlert('❌ Скопируй данные с Windows!');
+  }
 }
 
 // ===== OrderManager =====
@@ -114,6 +195,7 @@ class OrderMgr {
     this.renderOrder(order);
     this.updateNoOrdersMessage();
     this.updateAutoComplete(order.items.map(i => i.name));
+    setTimeout(syncWithSheets, 1500);
   }
 
   async updateOrder(id, updatedOrder) {
@@ -129,6 +211,7 @@ class OrderMgr {
       };
       await this.saveOrders(orders);
       this.reRenderAll();
+      setTimeout(syncWithSheets, 1500);
     }
   }
 
@@ -137,6 +220,7 @@ class OrderMgr {
     const newOrders = orders.filter(o => o.id !== id);
     await this.saveOrders(newOrders);
     this.reRenderAll();
+    setTimeout(syncWithSheets, 1500);
   }
 
   updateAutoComplete(items) {
@@ -155,30 +239,21 @@ class OrderMgr {
     });
   }
 
-  // 🔥 НОВАЯ СОРТИРОВКА ПО ВЫБОРУ ПОЛЬЗОВАТЕЛЯ
   reRenderAll() {
     document.getElementById('ordersList').innerHTML = '';
     this.loadOrders().then(orders => {
-      // 🔥 УМНАЯ СОРТИРОВКА
       orders.sort((a, b) => {
         const sortType = document.getElementById('sortSelect')?.value || 'date-desc';
-        
-        // 1. СОРТИРОВКА ПО ДАТЕ
         if (sortType.startsWith('date')) {
           const dateA = new Date(a.createdAt);
           const dateB = new Date(b.createdAt);
           const dateDiff = dateA - dateB;
           if (dateDiff !== 0) return sortType === 'date-desc' ? dateDiff * -1 : dateDiff;
         }
-        
-        // 2. СОРТИРОВКА ПО НОМЕРУ
         const numA = parseInt(a.number.replace(/\D/g, ''), 10) || 0;
         const numB = parseInt(b.number.replace(/\D/g, ''), 10) || 0;
-        const numDiff = numA - numB;
-        
-        return sortType.includes('desc') ? numDiff * -1 : numDiff;
+        return sortType.includes('desc') ? (numA - numB) * -1 : numA - numB;
       });
-      
       orders.forEach(order => this.renderOrder(order));
       this.updateNoOrdersMessage();
       applySearchFilters();
@@ -242,8 +317,8 @@ class OrderMgr {
 const orderManager = new OrderMgr();
 let currentEditId = null;
 let isSubmitting = false;
+let syncClickCount = 0;
 
-// ===== Item Rows =====
 function addItemRow(item = null) {
   const container = document.getElementById('itemsList');
   const itemDiv = document.createElement('div');
@@ -267,8 +342,7 @@ function addItemRow(item = null) {
     cb.onchange = function() {
       if (this.checked) {
         const dateSpan = this.parentNode.querySelector('.status-date');
-        const date = new Date().toLocaleDateString('ru-RU');
-        dateSpan.textContent = date;
+        dateSpan.textContent = new Date().toLocaleDateString('ru-RU');
       }
     };
   });
@@ -276,7 +350,6 @@ function addItemRow(item = null) {
   container.appendChild(itemDiv);
 }
 
-// ===== Modal =====
 async function openModal(editId) {
   currentEditId = editId;
   document.getElementById('modal').style.display = 'block';
@@ -302,66 +375,8 @@ function closeModal() {
   document.getElementById('modal').style.display = 'none';
   currentEditId = null;
   clearForm();
-  
   const alert = document.getElementById('customAlert');
   if (alert) alert.remove();
-}
-
-// ===== Event Listeners =====
-function setupEventListeners() {
-  document.getElementById('newOrderBtn').onclick = () => openModal(null);
-  document.querySelectorAll('.close, .close-modal').forEach(el => el.onclick = closeModal);
-  document.getElementById('orderForm').onsubmit = handleFormSubmit;
-  document.getElementById('addItemBtn').onclick = addItemRow;
-  document.getElementById('deleteBtn').onclick = deleteOrderFromModal;
-  document.getElementById('refreshBtn').onclick = () => orderManager.reRenderAll();
-
-  document.getElementById('totalBtn').onclick = async () => {
-    const orders = await orderManager.loadOrders();
-    const total = orders.reduce((sum, order) => 
-      sum + order.items.reduce((itemSum, item) => itemSum + (item.price || 0), 0), 0
-    );
-    alert(`💰 Общая сумма: ${total.toLocaleString()} ₽ (${orders.length} заказов)`);
-  };
-
-  document.getElementById('exportBtn').onclick = async () => {
-    const orders = await orderManager.loadOrders();
-    if (orders.length === 0) {
-      showAlert('Нет данных для экспорта');
-      return;
-    }
-
-    let csv = 'ID;Номер;Дата;Товары;Клиенты;Статусы\n';
-    orders.forEach(order => {
-      const items = order.items.map(i => `${i.name} (${i.price} ₽)`).join(', ');
-      const clients = (order.clients || []).map(c => c.full || c.phone || c.name || '').join(', ');
-      const statuses = order.items.map(i => 
-        Object.entries(i.statuses || {})
-          .filter(([k, v]) => v)
-          .map(([k]) => ({received:'Получен', notified:'Уведомлен', issued:'Выдан', returned:'Возврат'}[k]))
-          .join(',')
-      ).filter(s => s).join('; ');
-
-      csv += `"${order.id.slice(-6)}";"${order.number}";"${order.createdAt}";"${items}";"${clients}";"${statuses}"\n`;
-    });
-
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `заказы_умишки_${new Date().toISOString().slice(0,10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  setupSearchFilter();
-  
-  document.addEventListener('click', e => {
-    if (e.target.classList.contains('btn-edit')) openModal(e.target.dataset.id);
-    if (e.target.classList.contains('btn-delete')) deleteOrderConfirm(e.target.dataset.id);
-  });
 }
 
 async function loadOrderForEdit(id) {
@@ -402,12 +417,8 @@ async function handleFormSubmit(e) {
       createdAt: document.getElementById('orderDate').value
     };
 
-    if (client1) {
-      formData.clients.push({ full: client1 });
-    }
-    if (client2) {
-      formData.clients.push({ full: client2 });
-    }
+    if (client1) formData.clients.push({ full: client1 });
+    if (client2) formData.clients.push({ full: client2 });
 
     document.querySelectorAll('.item').forEach(itemEl => {
       const name = itemEl.querySelector('.itemName').value.trim();
@@ -430,12 +441,12 @@ async function handleFormSubmit(e) {
     });
 
     if (formData.items.length === 0) {
-      showAlert('Добавьте хотя бы один товар', 'addItemBtn');
+      showAlert('Добавьте товар', 'addItemBtn');
       return;
     }
 
     if (!formData.number.match(/^№\d{4}$/)) {
-      showAlert('Номер должен быть вида №0001', 'orderNumber');
+      showAlert('Номер: №0001', 'orderNumber');
       return;
     }
 
@@ -463,7 +474,7 @@ async function deleteOrderConfirm(id) {
   const orders = await orderManager.loadOrders();
   const order = orders.find(o => o.id === id);
   const number = order?.number || `заказ ${id.slice(-6)}`;
-  if (confirm(`Удалить заказ ${number}?`)) {
+  if (confirm(`Удалить ${number}?`)) {
     await orderManager.deleteOrder(id);
   }
 }
@@ -479,7 +490,6 @@ async function generateSequentialNumber() {
   return `№${(lastNumber + 1).toString().padStart(4, '0')}`;
 }
 
-// ===== ПОИСК + СОРТИРОВКА =====
 function setupSearchFilter() {
   document.getElementById('searchInput').oninput = debounce(() => {
     applySearchFilters();
@@ -489,7 +499,6 @@ function setupSearchFilter() {
     applySearchFilters();
   };
   
-  // 🔥 СОРТИРОВКА ПРИ СМЕНЕ
   document.getElementById('sortSelect').onchange = () => {
     orderManager.reRenderAll();
   };
@@ -542,7 +551,6 @@ function applySearchFilters() {
   document.getElementById('noOrders').style.display = visibleRows.length > 0 ? 'none' : 'block';
 }
 
-// ===== СУПЕР-DEBOUNCE =====
 function debounce(func, wait) {
   let timeout;
   let lastCall = 0;
@@ -558,7 +566,70 @@ function debounce(func, wait) {
   };
 }
 
-// ===== Init =====
+function setupEventListeners() {
+  document.getElementById('newOrderBtn').onclick = () => openModal(null);
+  document.querySelectorAll('.close, .close-modal').forEach(el => el.onclick = closeModal);
+  document.getElementById('orderForm').onsubmit = handleFormSubmit;
+  document.getElementById('addItemBtn').onclick = addItemRow;
+  document.getElementById('deleteBtn').onclick = deleteOrderFromModal;
+  document.getElementById('refreshBtn').onclick = () => orderManager.reRenderAll();
+  
+  document.getElementById('syncBtn').onclick = () => {
+    syncClickCount++;
+    setTimeout(() => {
+      if (syncClickCount === 1) syncWithSheets();
+      else if (syncClickCount === 2) importFromClipboard();
+      syncClickCount = 0;
+    }, 300);
+  };
+
+  document.getElementById('totalBtn').onclick = async () => {
+    const orders = await orderManager.loadOrders();
+    const total = orders.reduce((sum, order) => 
+      sum + order.items.reduce((itemSum, item) => itemSum + (item.price || 0), 0), 0
+    );
+    alert(`💰 ${total.toLocaleString()} ₽ (${orders.length} заказов)`);
+  };
+
+  document.getElementById('exportBtn').onclick = async () => {
+    const orders = await orderManager.loadOrders();
+    if (orders.length === 0) {
+      showAlert('Нет данных');
+      return;
+    }
+
+    let csv = 'ID;Номер;Дата;Товары;Клиенты;Статусы\n';
+    orders.forEach(order => {
+      const items = order.items.map(i => `${i.name} (${i.price}₽)`).join(', ');
+      const clients = (order.clients || []).map(c => c.full || c.phone || c.name || '').join(', ');
+      const statuses = order.items.map(i => 
+        Object.entries(i.statuses || {})
+         .filter(([k, v]) => v)
+         .map(([k]) => ({received:'Получен', notified:'Уведомлен', issued:'Выдан', returned:'Возврат'}[k]))
+         .join(',')
+      ).filter(s => s).join('; ');
+
+      csv += `"${order.id.slice(-6)}";"${order.number}";"${order.createdAt}";"${items}";"${clients}";"${statuses}"\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `заказы_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  setupSearchFilter();
+  document.addEventListener('click', e => {
+    if (e.target.classList.contains('btn-edit')) openModal(e.target.dataset.id);
+    if (e.target.classList.contains('btn-delete')) deleteOrderConfirm(e.target.dataset.id);
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const datalist = document.createElement('datalist');
   datalist.id = 'autocomplete-items';
