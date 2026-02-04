@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#2196F3">
+  <link rel="manifest" href="./manifest.json">
+  <title>У Мишки Бэби — Заказы</title>
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js');
+    }
+  </script>
+</head>
+<body>
+  <div class="container">
+    <!-- HEADER -->
+    <header class="app-header">
+      <h1>🍼 У Мишки Бэби</h1>
+      <div class="actions">
+        <button id="newOrderBtn" class="btn btn-add">➕ Новый заказ</button>
+        <button id="refreshBtn" class="btn btn-secondary">🔄 Обновить</button>
+        <button id="totalBtn" class="btn btn-secondary">💰 Сумма</button>
+        <button id="exportBtn" class="btn btn-secondary">📊 Экспорт</button>
+      </div>
+    </header>
+
+    <!-- 🔥 ПОИСК + ФИЛЬТРЫ + СОРТИРОВКА — ОДИН БЛОК! -->
+    <div class="search-row">
+      <input id="searchInput" class="search-input" placeholder="🔍 Поиск по номеру, товарам, клиентам...">
+      <select id="filterSelect" class="filter-select">
+        <option value="all">Все заказы</option>
+        <option value="new">🆕 Новые (2 дня)</option>
+        <option value="ok">✅ Без просрочки</option>
+        <option value="overdue14">⏰ Просрочка 14д</option>
+        <option value="overdue45">⏰ Просрочка 45д</option>
+        <option value="overdue">⏰ Любая просрочка</option>
+        <option value="returned">🔄 Возвраты</option>
+        <option value="received">📦 Поступили</option>
+      </select>
+      <!-- 🔥 СОРТИРОВКА -->
+      <select id="sortSelect" class="filter-select">
+        <option value="date-desc">📅 Новые сверху</option>
+        <option value="date-asc">📅 Старые сверху</option>
+        <option value="number-asc">🔢 № по возрастанию</option>
+        <option value="number-desc">🔢 № по убыванию</option>
+      </select>
+    </div>
+
+    <!-- ✅ ТАБЛИЦА — 7 СТОЛБЦОВ -->
+    <div class="orders-table">
+      <table class="orders-list">
+        <thead>
+          <tr>
+            <!-- СКРЫТЫЙ ID -->
+            <th style="display: none;">ID</th>
+            <th>№ Заказ</th>
+            <th>Товары</th>
+            <th>Клиент</th>
+            <th>Статус</th>
+            <th>Срок 14д</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="ordersList"></tbody>
+      </table>
+      <div id="noOrders" class="no-orders">📦 Нет заказов</div>
+    </div>
+  </div>
+
+  <!-- МОДАЛКА -->
+  <div id="modal" class="modal">
+    <div class="modal-content">
+      <span class="close">&times;</span>
+      <h2 id="modalTitle">Новый заказ</h2>
+      
+      <form id="orderForm">
+        <!-- НОМЕР + ДАТЫ -->
+        <div class="form-row">
+          <div class="form-group">
+            <label for="orderNumber">Номер заказа</label>
+            <input id="orderNumber" required>
+          </div>
+          <div class="form-group">
+            <label for="orderDate">Дата создания</label>
+            <input id="orderDate" type="date" required>
+          </div>
+          <div class="form-group">
+            <label for="deliveryDate14">Срок 14 раб.дней</label>
+            <input id="deliveryDate14" type="date">
+          </div>
+          <div class="form-group">
+            <label for="deliveryDate45">Срок 45 кал.дней</label>
+            <input id="deliveryDate45" type="date">
+          </div>
+        </div>
+
+        <!-- ✅ НОВЫЕ ЕДИНЫЕ ПОЛЯ КЛИЕНТОВ -->
+        <div class="form-row">
+          <div class="form-group half">
+            <label>Клиент 1</label>
+            <input id="client1" placeholder="Иван Петров 89123456789">
+          </div>
+          <div class="form-group half">
+            <label>Клиент 2</label>
+            <input id="client2" placeholder="Мария Сидорова 79112233445">
+          </div>
+        </div>
+
+        <!-- ТОВАРЫ -->
+        <div class="items-container">
+          <h3>📦 Товары 
+            <button id="addItemBtn" type="button" class="btn btn-menu">+</button>
+          </h3>
+          <div id="itemsList"></div>
+        </div>
+
+        <!-- КОММЕНТАРИЙ -->
+        <div class="form-group">
+          <label for="orderComment">Комментарий</label>
+          <textarea id="orderComment" rows="3" placeholder="Дополнительная информация..."></textarea>
+        </div>
+
+        <!-- КНОПКИ -->
+        <div class="form-actions">
+          <button id="deleteBtn" type="button" class="btn btn-danger" style="display:none;">🗑️ Удалить</button>
+          <button type="button" class="btn btn-cancel close-modal">❌ Отмена</button>
+          <button type="submit" class="btn btn-primary">💾 Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ✅ КОНСОЛЬ РАБОТАЕТ — ОШИБКИ ВИДНЫ! -->
+  <script src="renderer.js"></script>
+</body>
+</html>
